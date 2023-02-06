@@ -1,0 +1,59 @@
+variables:
+  IMAGE_NAME: remayke/learning
+  IMAGE_TAG: ultima
+  DOCKER_USERNAME: remayke
+  HOST: 198.74.54.223
+  USERNAME: root
+
+cache:
+  paths: 
+    - .m2/repository
+
+stages:
+  - test-build
+  - docker
+  - deploy
+
+
+
+test-build:
+  stage: test-build
+  image: amazoncorretto:17
+  script:
+    - ./mvnw clean package
+  artifacts:
+    paths:
+      - "./target/*.jar"
+    expire_in: 1 hour
+
+
+
+docker:
+  stage: docker
+  image: docker:20.10.16
+  needs: [ 'test-build' ]
+  services:
+    - docker:20.10.16-dind
+  before_script:
+    - docker login -u $DOCKER_USERNAME -p "$DOCKER_PASS"
+  script:
+    - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+    - docker push $IMAGE_NAME:$IMAGE_TAG
+
+
+
+deploy:
+  stage: deploy
+  image: ubuntu
+  needs: [ 'docker']
+  before_script:
+    - apt-get update -y && apt-get install openssh-client -y
+    - chmod 400 $SSH_KEY
+  script:
+    - ssh -o StrictHostKeyCHecking=no -i $SSH_KEY $USERNAME@$HOST "
+      export PATH=$PATH:/usr/bin/docker &&
+      docker login -u $DOCKER_USERNAME -p "$DOCKER_PASS" &&
+      docker ps -aq | xargs --no-run-if-empty docker stop &&
+      docker ps -aq | xargs --no-run-if-empty docker rm &&
+      docker images -aq | xargs --no-run-if-empty docker rmi &&
+      docker run -d -p 80:8080 $IMAGE_NAME:$IMAGE_TAG"
